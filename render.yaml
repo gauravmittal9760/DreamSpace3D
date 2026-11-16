@@ -1,0 +1,30 @@
+services:
+  - type: web
+    name: dreamspace-3d
+    runtime: python
+    plan: free
+    buildCommand: ./build.sh
+    startCommand: gunicorn --chdir backend run:app --workers 1 --threads 4 --timeout 120 --bind 0.0.0.0:$PORT
+    healthCheckPath: /api/health
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.12.7
+      - key: NODE_VERSION
+        value: 20.18.0
+      - key: FLASK_ENV
+        value: production
+      # --- secrets: paste the real values in the Render dashboard (sync: false = not stored in git) ---
+      - { key: DATABASE_URL, sync: false }
+      - { key: SECRET_KEY, sync: false }
+      - { key: CLOUDINARY_CLOUD_NAME, sync: false }
+      - { key: CLOUDINARY_API_KEY, sync: false }
+      - { key: CLOUDINARY_API_SECRET, sync: false }
+      - { key: MAIL_DEFAULT_SENDER, sync: false }
+      - { key: MAIL_SENDER_NAME, sync: false }
+      - { key: BREVO_API_KEY, sync: false }
+      - { key: ADMIN_USERNAME, sync: false }
+      - { key: ADMIN_EMAIL, sync: false }
+      - { key: ADMIN_PASSWORD, sync: false }
+      - { key: ADMIN_PANEL_PASSWORD, sync: false }
+      - { key: ADMIN_SECURITY_QUESTION, sync: false }
+      - { key: ADMIN_SECURITY_ANSWER, sync: false }
