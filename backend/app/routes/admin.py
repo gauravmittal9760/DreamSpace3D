@@ -6,6 +6,7 @@ from sqlalchemy import func, or_
 
 from app import db
 from app.ml.forecast import forecast
+from app.models.extra import ProjectComment, ProjectMember, ProjectVersion
 from app.models.misc import ActivityLog, Backup
 from app.models.otp import OTPVerification
 from app.models.project import Project
@@ -374,14 +375,32 @@ def backup_delete(bid):
 @admin_bp.post("/settings/email")
 @admin_required
 def set_email():
+    """Step 1: verify the admin password and e-mail an OTP to the NEW address."""
     d = body()
     new = str(d.get("new_email", "")).strip().lower()
     if not valid_email(new):
         return reply(fail("Enter a valid email address."), 400)
     if not admin_auth.check_login_password(str(d.get("password", ""))):
         return reply(fail("Admin password is incorrect."), 401)
+    sent, msg = send_verification_otp(new, "admin_email", None)
+    if not sent:
+        return reply(fail(msg), 429 if "wait" in msg.lower() else 502)
+    session["admin_pending_email"] = new
+    return reply(ok(message=f"An OTP was sent to {mask(new)}. Enter it to confirm the change.", pending=True))
+
+
+@admin_bp.post("/settings/email/confirm")
+@admin_required
+def confirm_email():
+    new = session.get("admin_pending_email")
+    if not new:
+        return reply(fail("Start the email change again."), 400)
+    good, msg = verify_email_otp(new, str(body().get("otp", "")), "admin_email", None)
+    if not good:
+        return reply(fail(msg), 400)
     admin_auth.set_email(new)
-    log_event("admin_settings", username=admin_auth.username(), actor="admin", detail=f"Admin email changed to {mask(new)}")
+    session.pop("admin_pending_email", None)
+    log_event("admin_settings", username=admin_auth.username(), actor="admin", detail=f"Admin email changed to {mask(new)} (OTP verified)")
     return reply(ok(message="Admin email updated.", email=mask(new)))
 
 
@@ -418,9 +437,112 @@ def delete_app():
     counts = {"users": User.query.count(), "projects": Project.query.count()}
     wiped = cloud.wipe_everything()
     # order matters because of foreign keys
-    for model in (OTPVerification, Project, User, ActivityLog, Backup):
+    for model in (OTPVerification, ProjectComment, ProjectMember, ProjectVersion, Project, User, ActivityLog, Backup):
         db.session.query(model).delete(synchronize_session=False)
     db.session.commit()
     analytics.usage_snapshot(force=True)
     log_event("admin_action", username=admin_auth.username(), actor="admin", detail=f"ENTIRE APP DELETED: {counts}, cloud assets {wiped.get('deleted', 0)}")
     return reply(ok(message="All users, projects, logs, backups and cloud files were deleted.", **counts, cloud_deleted=wiped.get("deleted", 0)))
+
+
+# ================================================================ product catalogue (real purchasable products)
+from app.models.extra import Product  # noqa: E402
+from app.services import features as feature_flags  # noqa: E402
+
+
+def _product_from(d, p=None):
+    p = p or Product()
+    name = str(d.get("name", "")).strip()
+    itype = str(d.get("item_type", "")).strip()
+    from app.ml.catalog_types import ALL_TYPES
+    if not name or len(name) > 160 or itype not in ALL_TYPES:
+        raise ValueError("Name and a valid item type are required.")
+    try:
+        price = float(d.get("price", 0))
+    except (TypeError, ValueError):
+        raise ValueError("Price must be a number.")
+    if not 0 <= price <= 1e8:
+        raise ValueError("Price is out of range.")
+    p.name, p.item_type, p.price = name, itype, price
+    p.brand = str(d.get("brand", ""))[:80] or None
+    p.material = str(d.get("material", ""))[:80] or None
+    for k, attr in (("w", "width"), ("h", "height"), ("d", "depth")):
+        v = d.get(k)
+        setattr(p, attr, float(v) if v not in (None, "") else None)
+    for k in ("image_url", "purchase_url"):
+        v = str(d.get(k, "") or "").strip()
+        if v and not v.lower().startswith(("http://", "https://")):
+            raise ValueError("Links must start with http:// or https://")
+        setattr(p, k, v[:600] or None)
+    p.in_stock = bool(d.get("in_stock", True))
+    return p
+
+
+@admin_bp.get("/products")
+@admin_required
+def products_list():
+    return reply(ok(products=[p.to_dict() for p in Product.query.order_by(Product.item_type, Product.price).all()]))
+
+
+@admin_bp.post("/products")
+@admin_required
+def products_create():
+    try:
+        p = _product_from(body())
+    except (ValueError, TypeError) as e:
+        return reply(fail(str(e)), 400)
+    db.session.add(p); db.session.commit()
+    return reply(ok(product=p.to_dict()), 201)
+
+
+@admin_bp.put("/products/<int:pid>")
+@admin_required
+def products_update(pid):
+    p = db.session.get(Product, pid)
+    if not p: return reply(fail("Product not found."), 404)
+    try:
+        _product_from(body(), p)
+    except (ValueError, TypeError) as e:
+        return reply(fail(str(e)), 400)
+    db.session.commit()
+    return reply(ok(product=p.to_dict()))
+
+
+@admin_bp.delete("/products/<int:pid>")
+@admin_required
+def products_delete(pid):
+    p = db.session.get(Product, pid)
+    if not p: return reply(fail("Product not found."), 404)
+    db.session.delete(p); db.session.commit()
+    return reply(ok(message="Product deleted."))
+
+
+# ================================================================ feature switches + system health
+@admin_bp.get("/features")
+@admin_required
+def features_get():
+    return reply(ok(features=feature_flags.all_flags(), labels=feature_flags.LABELS))
+
+
+@admin_bp.put("/features")
+@admin_required
+def features_put():
+    cur = feature_flags.set_flags(body().get("features"))
+    log_event("admin_settings", username=admin_auth.username(), actor="admin", detail=f"Feature switches: {cur}")
+    return reply(ok(features=cur))
+
+
+@admin_bp.get("/system")
+@admin_required
+def system_health():
+    import os as _os
+    import time as _t
+    from sqlalchemy import text as _text
+    t0 = _t.perf_counter()
+    db.session.execute(_text("select 1"))
+    ms = round((_t.perf_counter() - t0) * 1000, 1)
+    since = utc_now() - timedelta(hours=24)
+    errs = ActivityLog.query.filter(ActivityLog.event == "error", ActivityLog.created_at >= since).count()
+    recent = ActivityLog.query.filter(ActivityLog.event == "error").order_by(ActivityLog.created_at.desc()).limit(12).all()
+    return reply(ok(db_latency_ms=ms, errors_24h=errs, recent_errors=[e.to_dict() for e in recent], version="3.0.0",
+                    cloud=cloud.configured(), mail_configured=bool(_os.getenv("BREVO_API_KEY"))))

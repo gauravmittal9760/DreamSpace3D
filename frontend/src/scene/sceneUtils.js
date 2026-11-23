@@ -23,7 +23,7 @@ export function createRoom(type = "room", name, rooms = []) {
     tileSize: FLOOR_BY_ID[def.floorMat]?.size || 0.6, finish: "matt", walls: {}, objects: [],
     open: def.open || null,
   };
-  const spot = findFreeSpot(rooms, w, l);
+  const spot = findFreeSpot(rooms, w, l) || { x: rooms.reduce((m, r) => Math.max(m, r.x + r.w), 0) + w, z: 0 };
   room.x = spot.x; room.z = spot.z;
   return room;
 }
@@ -31,11 +31,14 @@ export function createRoom(type = "room", name, rooms = []) {
 export function defaultScene() {
   const floor = createFloor("Ground Floor", 3.0);
   floor.rooms.push(createRoom("living", "Living Room", []));
-  return { version: 2, floors: [floor], exteriorColor: "#e9e2d6", showRoof: true, grade: "standard", ground: { color: "#4f8f55", size: 40 } };
+  return { version: 2, floors: [floor], exteriorColor: "#e9e2d6", showRoof: true, grade: "standard", north: 0, lat: 28.6, ground: { color: "#4f8f55", size: 40 } };
 }
 
+const finite = (v, lo, hi, dflt) => { const n = Number(v); return Number.isFinite(n) ? Math.max(lo, Math.min(hi, n)) : dflt; };
+
 export function normalizeScene(data) {
-  const d = data && typeof data === "object" ? clone(data) : {};
+  const d = data && typeof data === "object" && !Array.isArray(data) ? clone(data) : {};
+  if (Array.isArray(d.floors)) d.floors = d.floors.filter((f) => f && typeof f === "object");
   if (!Array.isArray(d.floors) || !d.floors.length) {
     // legacy single-room project -> convert
     const old = d.room || { width: 6, length: 7, height: 3 };
@@ -50,20 +53,22 @@ export function normalizeScene(data) {
   d.exteriorColor ||= "#e9e2d6";
   d.grade ||= "standard";
   d.showRoof = d.showRoof !== false;
+  d.north = finite(d.north, -360, 360, 0);   // plan-north offset from true north (deg, clockwise)
+  d.lat = finite(d.lat, -66, 66, 28.6);      // latitude for the sunlight simulator
   d.ground ||= { color: "#4f8f55", size: 40 };
   d.floors = d.floors.map((f, fi) => ({
-    ...f, id: f.id || uid(), name: f.name || `Floor ${fi + 1}`, height: Number(f.height) || 3,
-    rooms: (Array.isArray(f.rooms) ? f.rooms : []).map((r, ri) => {
+    ...f, id: f.id || uid(), name: f.name || `Floor ${fi + 1}`, height: finite(f.height, 2, 8, 3),
+    rooms: (Array.isArray(f.rooms) ? f.rooms : []).filter((r) => r && typeof r === "object").map((r, ri) => {
       const type = ROOM_TYPES[r.type] ? r.type : "room";
       const def = ROOM_TYPES[type];
       return {
         walls: {}, finish: "matt", ...r, id: r.id || uid(), name: r.name || `Room ${ri + 1}`, type,
-        w: Number(r.width ?? r.w) || def.size[0], l: Number(r.length ?? r.l) || def.size[1],
-        x: Number(r.x) || 0, z: Number(r.z) || 0, wallColor: r.wallColor || def.wall,
+        w: finite(r.width ?? r.w, 1, 80, def.size[0]), l: finite(r.length ?? r.l, 1, 80, def.size[1]),
+        x: finite(r.x, -2000, 2000, 0), z: finite(r.z, -2000, 2000, 0), wallColor: r.wallColor || def.wall,
         floorMat: FLOOR_BY_ID[r.floorMat] ? r.floorMat : def.floorMat,
         floorColor: r.floorColor || FLOOR_BY_ID[def.floorMat]?.base || "#cccccc",
         tileSize: Number(r.tileSize) || FLOOR_BY_ID[def.floorMat]?.size || 0.6, open: r.open ?? def.open ?? null,
-        objects: (Array.isArray(r.objects) ? r.objects : []).map(normalizeObject),
+        objects: (Array.isArray(r.objects) ? r.objects : []).filter((o) => o && typeof o === "object" && !Array.isArray(o)).map(normalizeObject),
       };
     }),
   }));
@@ -76,9 +81,10 @@ function normalizeObject(o) {
   const key = cat ? o.key : (Object.values(ITEM_BY_KEY).find((i) => i.type === type)?.key || "cube.cb1");
   const base = ITEM_BY_KEY[key];
   return {
-    id: o.id || uid(), key, type, name: o.name || base.name, x: Number(o.x) || 0, z: Number(o.z) || 0, ry: Number(o.ry) || 0,
-    y: o.y ?? base.y, dims: Array.isArray(o.dims) && o.dims.length === 3 ? o.dims.map(Number) : [...base.dims],
-    color: o.color || base.p.c || "#b68b63", wall: o.wall, t: o.t, hidden: !!o.hidden,
+    id: o.id || uid(), key, type, name: o.name || base.name, x: finite(o.x, -2000, 2000, 0), z: finite(o.z, -2000, 2000, 0), ry: finite(o.ry, -720, 720, 0),
+    y: o.y == null ? base.y : finite(o.y, -50, 100, base.y),
+    dims: Array.isArray(o.dims) && o.dims.length === 3 && o.dims.every((v) => Number.isFinite(Number(v)) && Number(v) > 0) ? o.dims.map((v) => Math.min(40, Math.max(0.02, Number(v)))) : [...base.dims],
+    color: typeof o.color === "string" && o.color ? o.color : base.p.c || "#b68b63", wall: ["N", "E", "S", "W"].includes(o.wall) ? o.wall : o.wall ? "S" : undefined, t: o.t == null ? undefined : finite(o.t, -100, 100, 0), hidden: !!o.hidden, locked: !!o.locked,
   };
 }
 
@@ -111,7 +117,17 @@ export function findFreeSpot(rooms, w, l) {
   const test = { w, l, id: "_" };
   const valid = cand.filter((c) => !roomOverlaps({ ...test, ...c }, rooms));
   valid.sort((a, b) => Math.hypot(a.x, a.z) - Math.hypot(b.x, b.z));
-  return valid[0] ? { x: r2(valid[0].x), z: r2(valid[0].z) } : { x: 0, z: 0 };
+  if (valid[0]) return { x: r2(valid[0].x), z: r2(valid[0].z) };
+  // grid search in growing rings around the existing rooms (guarantees a free spot)
+  const cx = rooms.reduce((s, r) => s + r.x, 0) / rooms.length, cz = rooms.reduce((s, r) => s + r.z, 0) / rooms.length;
+  for (let ring = 1; ring <= 200; ring++) {
+    const R = ring;
+    for (let k = 0; k < 8 * ring; k++) {
+      const ang = (k / (8 * ring)) * Math.PI * 2, c = { x: snap(cx + Math.cos(ang) * R, 0.5), z: snap(cz + Math.sin(ang) * R, 0.5) };
+      if (!roomOverlaps({ ...test, ...c }, rooms)) return { x: r2(c.x), z: r2(c.z) };
+    }
+  }
+  return null;
 }
 
 /** Snap a room to touch neighbours (magnetic edges) and stay out of overlaps. */
@@ -214,9 +230,10 @@ export function createObject(key, room) {
 }
 
 export function clampInRoom(room, o, x, z) {
-  const rot = ((Math.round(o.ry) % 180) + 180) % 180;
+  // half-extents of the ROTATED footprint (works for any angle, not just 0/90)
   const [w, , d] = o.dims;
-  const [hw, hd] = rot === 90 ? [d / 2, w / 2] : [w / 2, d / 2];
+  const th = ((o.ry || 0) * Math.PI) / 180, c = Math.abs(Math.cos(th)), s = Math.abs(Math.sin(th));
+  const hw = (w * c + d * s) / 2, hd = (w * s + d * c) / 2;
   const mx = Math.max(0, room.w / 2 - hw), mz = Math.max(0, room.l / 2 - hd);
   return { x: Math.max(-mx, Math.min(mx, x)), z: Math.max(-mz, Math.min(mz, z)) };
 }

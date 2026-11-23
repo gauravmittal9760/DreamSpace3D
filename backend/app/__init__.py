@@ -171,7 +171,8 @@ def create_app():
     def health():
         return jsonify({
             "status": "success",
-            "message": "DreamSpace 3D backend is running"
+            "message": "DreamSpace 3D backend is running",
+            "version": "3.0.0"
         }), 200
 
     @app.errorhandler(413)
@@ -182,7 +183,14 @@ def create_app():
         }), 413
 
     @app.errorhandler(500)
-    def server_error(_e):
+    def server_error(e):
+        try:  # log only the error TYPE and route - never request bodies, tokens or design data
+            from app.services.activity import log_event
+            db.session.rollback()
+            orig = getattr(e, "original_exception", e)
+            log_event("error", detail=f"[api] {request.method} {request.path}: {type(orig).__name__}", actor="system")
+        except Exception:
+            pass
         return jsonify({
             "success": False,
             "message": "Something went wrong on the server."

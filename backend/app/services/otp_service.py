@@ -14,7 +14,7 @@ OTP_MAX_ATTEMPTS = 5
 
 ALLOWED_OTP_PURPOSES = {
     "signup", "login_2fa", "enable_2fa", "password_reset",
-    "admin_recovery", "forgot_username", "change_email",
+    "admin_recovery", "forgot_username", "change_email", "admin_email",
 }
 
 
@@ -44,12 +44,16 @@ def create_otp(email, purpose, user_id=None):
         return False, "Invalid OTP purpose.", None
     now = utc_now()
     try:
-        existing = _find_active_otp(email, purpose, user_id)
-        if existing:
-            elapsed = (now - as_utc(existing.last_sent_at)).total_seconds()
+        # cooldown is per e-mail + purpose (NOT per account) so several accounts on one address cannot be used to spam it
+        latest = (OTPVerification.query.filter_by(email=email, purpose=purpose)
+                  .order_by(OTPVerification.last_sent_at.desc()).first())
+        if latest:
+            elapsed = (now - as_utc(latest.last_sent_at)).total_seconds()
             if elapsed < OTP_RESEND_COOLDOWN_SECONDS:
                 remaining = int(OTP_RESEND_COOLDOWN_SECONDS - elapsed) + 1
                 return False, f"Please wait {remaining} seconds before requesting another OTP.", None
+        existing = _find_active_otp(email, purpose, user_id)
+        if existing:
             existing.is_used = True
 
         otp = generate_otp()
@@ -72,6 +76,7 @@ def cancel_otp(email, purpose, user_id=None):
         rec = _find_active_otp((email or "").strip().lower(), purpose, user_id)
         if rec:
             rec.is_used = True
+            rec.last_sent_at = utc_now() - timedelta(seconds=OTP_RESEND_COOLDOWN_SECONDS * 2)  # lifts the cooldown
             db.session.commit()
     except Exception:
         db.session.rollback()

@@ -17,6 +17,8 @@ class Project(db.Model):
     # --- v2 columns ---
     thumbnail_url = db.Column(db.String(500), nullable=True)
     share_token = db.Column(db.String(40), nullable=True, unique=True, index=True)
+    share_expires_at = db.Column(db.DateTime(timezone=True), nullable=True)
+    share_password_hash = db.Column(db.String(255), nullable=True)
 
     user = db.relationship("User", back_populates="projects")
 
@@ -35,6 +37,8 @@ class Project(db.Model):
             "thumbnail_url": self.thumbnail_url,
             "shared": bool(self.share_token),
             "share_token": self.share_token,
+            "share_expires_at": ist_iso(self.share_expires_at),
+            "share_protected": bool(self.share_password_hash),
             "stats": self.stats(),
             "created_at": ist_iso(self.created_at),
             "updated_at": ist_iso(self.updated_at),

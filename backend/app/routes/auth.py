@@ -12,7 +12,7 @@ from app.models.user import User
 from app.routes.common import (PASSWORD_RULE, USERNAME_RULE, body, current_user, fail, find_user_by_username, ok,
                                valid_email, valid_password, valid_username)
 from app.security import check_password, hash_password
-from app.services import admin_auth, cloud
+from app.services import admin_auth, cloud, features
 from app.services.activity import log_event
 from app.services.otp_email_service import send_verification_otp, verify_email_otp
 from app.timeutil import as_utc, utc_now
@@ -66,6 +66,7 @@ def register_failed_login(user):
 def finish_login(user):
     session.permanent = True
     session["user_id"] = user.id
+    session["sv"] = user.session_version or 0
     user.last_login_at = utc_now()
     user.login_count = (user.login_count or 0) + 1
     user.failed_login_count = 0
@@ -105,6 +106,8 @@ def purge_stale_unverified():
 @auth_bp.post("/signup")
 def signup():
     d = body()
+    if not features.enabled("signup"):
+        return reply(fail("New sign-ups are temporarily closed by the administrator."), 403)
     username = str(d.get("username", "")).strip()
     email = str(d.get("email", "")).strip().lower()
     password = d.get("password", "")
@@ -364,6 +367,7 @@ def reset_password():
     try:
         user.password_hash = hash_password(new_password)
         user.password_changed_at = utc_now()
+        user.session_version = (user.session_version or 0) + 1
         user.failed_login_count, user.locked_until = 0, None
         db.session.commit()
         session.clear()
@@ -436,9 +440,11 @@ def change_password():
         return reply(fail(PASSWORD_RULE), 400)
     user.password_hash = hash_password(d["new_password"])
     user.password_changed_at = utc_now()
+    user.session_version = (user.session_version or 0) + 1  # signs out every other device
     db.session.commit()
-    log_event("password_changed", user, "Changed from account settings")
-    return reply(ok(message="Password changed successfully."))
+    session["sv"] = user.session_version  # ...but keeps this one
+    log_event("password_changed", user, "Changed from account settings (other sessions signed out)")
+    return reply(ok(message="Password changed. Other devices were signed out."))
 
 
 @auth_bp.post("/account/change-email/request")
@@ -518,4 +524,7 @@ def me():
     if user.is_blocked:
         session.clear()
         return reply(fail("Your account has been blocked by the administrator.", blocked=True), 403)
+    if session.get("sv", 0) != (user.session_version or 0):
+        session.clear()
+        return reply(fail("Your password was changed on another device. Please log in again.", session_expired=True), 401)
     return reply(ok(user=user.to_dict(), projects_count=Project.query.filter_by(user_id=user.id).count()))

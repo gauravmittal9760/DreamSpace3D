@@ -10,7 +10,7 @@ EVENTS = [
     "signup", "email_verified", "login", "login_failed", "account_locked", "logout",
     "password_changed", "password_reset", "email_change", "account_deleted",
     "2fa_enabled", "2fa_disabled", "project_created", "project_deleted",
-    "admin_login", "admin_unlock", "admin_action", "admin_settings", "backup", "restore",
+    "admin_login", "admin_unlock", "admin_action", "admin_settings", "backup", "restore", "error",
 ]
 
 

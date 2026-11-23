@@ -10,7 +10,7 @@ services:
       - key: PYTHON_VERSION
         value: 3.12.7
       - key: NODE_VERSION
-        value: 20.18.0
+        value: 22.13.0
       - key: FLASK_ENV
         value: production
       # --- secrets: paste the real values in the Render dashboard (sync: false = not stored in git) ---

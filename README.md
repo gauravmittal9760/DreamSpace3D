@@ -1,12 +1,16 @@
-# DreamSpace 3D 🏠✨ 
+# DreamSpace 3D 🏠✨ — v2
 
 Apna ghar / building 3D me design karo: rooms, floors, terrace, balcony, garden, 295 furniture designs, 156 paint shades, 24 floor materials, live cost estimate, real AI/ML, aur ek alag "Command Center" admin panel.
 
+**Stack:** Flask + Neon Postgres + Cloudinary + React/Three.js (Vite). Sab kuch **Neon + Cloudinary** me — koi local JSON/SQLite database nahi.
 
 ---
-## 1. `.env`
+## 1. `.env` (tumhare 14 variables bilkul sahi hain — kuch add/remove nahi karna)
 
 `DATABASE_URL, SECRET_KEY, CLOUDINARY_CLOUD_NAME, CLOUDINARY_API_KEY, CLOUDINARY_API_SECRET, MAIL_DEFAULT_SENDER, MAIL_SENDER_NAME, BREVO_API_KEY, ADMIN_USERNAME, ADMIN_EMAIL, ADMIN_PASSWORD, ADMIN_PANEL_PASSWORD, ADMIN_SECURITY_QUESTION, ADMIN_SECURITY_ANSWER`
+
+Optional (sirf agar chaaho): `NEON_STORAGE_LIMIT_MB` (default 512, admin storage gauge ke liye).
+`.env` ko project **root** me rakho (`.env.example` dekho). Ye file kabhi GitHub pe mat daalo (`.gitignore` already ignore karta hai).
 
 ## 2. Local chalana (Windows)
 ```

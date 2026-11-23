@@ -14,6 +14,19 @@ SENT = []
 oes.send_otp_email = lambda recipient_email, otp, purpose, expiry_minutes=10: (SENT.append((recipient_email, purpose, otp)) or (True, "ok"))
 from app.models.user import User
 from app.models.misc import AppSetting
+from app.models.project import Project
+from app.models.otp import OTPVerification
+from app.timeutil import utc_now
+from datetime import timedelta
+
+
+def age_otps():
+    """pretend 2 minutes passed (OTP cooldown is per e-mail + purpose)"""
+    with app.app_context():
+        for r in OTPVerification.query.all():
+            r.last_sent_at = utc_now() - timedelta(minutes=2)
+        db.session.commit()
+
 
 app = create_app()
 H = {"X-DS-Client": "web"}
@@ -54,6 +67,7 @@ s, j = post(c, "/api/auth/login", {"identifier": "alice", "password": "Passw0rdA
 check("unverified login refused", s == 403 and j.get("needs_verification"))
 s, j = post(c, "/api/auth/verify-email", {"username": "alice", "otp": last_otp("signup")})
 check("verify email", s == 200, j)
+age_otps()
 s, j = post(c, "/api/auth/signup", {"username": "alice2", "email": "alice@example.com", "password": "Passw0rdAAA"})
 check("2nd account same email", s == 201, j)
 post(c, "/api/auth/verify-email", {"username": "alice2", "otp": last_otp("signup")})
@@ -68,8 +82,8 @@ check("email login with 2 matching accounts asks to choose", s == 200 and j.get(
 s, j = post(c, "/api/auth/login", {"identifier": "alice2", "password": "Passw0rdAAA"})
 check("username login", s == 200 and j["user"]["username"] == "alice2")
 check("ist offset in timestamps", j["user"]["last_login_at"].endswith("+05:30"), j["user"]["last_login_at"])
-s, j = post(c, "/api/auth/me", method="get") if False else (c.get("/api/auth/me").status_code, c.get("/api/auth/me").get_json())
-check("/me", s == 200 and j["user"]["username"] == "alice2")
+rme = c.get("/api/auth/me")
+check("/me", rme.status_code == 200 and rme.get_json()["user"]["username"] == "alice2")
 
 # ---- lockout after 5 wrong passwords
 c2 = new_client()
@@ -143,7 +157,9 @@ r = ca.get("/api/admin/overview").get_json()
 check("overview", r["success"] and r["totals"]["users"] == 2 and r["totals"]["projects"] == 2, r.get("totals"))
 print("      forecast:", r["forecast"]["signups"]["direction"], "items:", r["top_items"][:3])
 us = ca.get("/api/admin/users").get_json()
-check("users list", us["total"] == 2 and us["users"][0]["last_login_at"] is not None or True)
+check("users list", us["total"] == 2, us["total"])
+alice2_row = [u for u in us["users"] if u["username"] == "alice2"][0]
+check("last login recorded (IST offset)", alice2_row["last_login_at"] and alice2_row["last_login_at"].endswith("+05:30") and alice2_row["login_count"] >= 1, alice2_row)
 uid = [u for u in us["users"] if u["username"] == "alice"][0]["id"]
 s, j = post(ca, f"/api/admin/users/{uid}/unblock")
 check("unblock clears lock", s == 200 and j["user"]["locked_until"] is None)
@@ -162,7 +178,7 @@ s, j = post(ca, "/api/admin/backups", {"scope": "full"})
 check("full backup", s == 200 and j["backup"]["projects_count"] == 2, j)
 s, j = post(ca, "/api/admin/backups", {"scope": "user", "user_id": uid})
 check("user backup", s == 200)
-s, j = post(ca, "/api/admin/prices" if False else "/api/admin/prices", {"prices": {"bed.b02": 12345}}, method="put")
+s, j = post(ca, "/api/admin/prices", {"prices": {"bed.b02": 12345}}, method="put")
 check("price override", s == 200)
 check("public prices", new_client().get("/api/catalog/prices").get_json()["prices"]["bed.b02"] == 12345)
 # admin recovery
@@ -180,5 +196,6 @@ s, j = post(ca, "/api/admin/danger/delete-app", {"panel_password": "PanelPass#45
 check("delete app needs phrase", s == 400)
 s, j = post(ca, "/api/admin/danger/delete-app", {"panel_password": "PanelPass#456", "confirm": "DELETE ENTIRE APP"})
 check("delete entire app", s == 200 and j["users"] == 2, j)
-check("db empty", User.query.count() == 0 if False else True)
+with app.app_context():
+    check("db empty after delete-app", User.query.count() == 0 and Project.query.count() == 0)
 print(f"\nALL {passed} CHECKS PASSED")

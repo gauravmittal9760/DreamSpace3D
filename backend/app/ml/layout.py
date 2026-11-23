@@ -17,6 +17,7 @@ FRONT_CLEAR = {"wardrobe": 0.7, "cabinet": 0.5, "dresser": 0.6, "kitchen_counter
                "fridge": 0.7, "washbasin": 0.5, "toilet": 0.5, "bookshelf": 0.5, "sofa": 0.5, "shower": 0.4, "bathtub": 0.3}
 SIDE_CLEAR = {"bed": 0.5}
 TALL_TYPES = {"wardrobe", "bookshelf", "cabinet", "fridge"}
+MAX_ARRANGE = 60
 NO_BLOCK = {"rug", "curtain", "painting", "mirror", "clock", "fan", "light", "chandelier", "ac", "window", "door", "tv"}
 
 
@@ -187,7 +188,8 @@ def arrange(room, objects, fixed=None, seed=7, iters=5000):
     W, L = float(room["w"]), float(room["l"])
     fixed = fixed or []
     items = []
-    for o in objects[:60]:
+    truncated = max(0, len(objects) - MAX_ARRANGE)
+    for o in objects[:MAX_ARRANGE]:
         t = o["type"]
         pref = "wall" if t in WALL_TYPES else "corner" if t in CORNER_TYPES else "center" if t in CENTER_TYPES else "free"
         items.append({**o, "pref": pref})
@@ -243,7 +245,7 @@ def arrange(room, objects, fixed=None, seed=7, iters=5000):
 
     placements = [{"id": o["id"], "x": round(round(x / 0.05) * 0.05, 3), "z": round(round(z / 0.05) * 0.05, 3), "ry": r % 360}
                   for o, (x, z, r) in zip(items, best_state)]
-    return {"placements": placements, "cost": round(best_cost, 2), "iterations": 3 * (iters // 3),
+    return {"placements": placements, "cost": round(best_cost, 2), "iterations": 3 * (iters // 3), "truncated": truncated, "limit": MAX_ARRANGE,
             "method": "simulated annealing, 3 restarts"}
 
 

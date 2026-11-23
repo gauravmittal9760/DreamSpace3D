@@ -47,7 +47,7 @@ def current_user():
     if not uid:
         return None
     user = db.session.get(User, uid)
-    if not user or user.is_blocked:
-        session.pop("user_id", None)
+    if not user or user.is_blocked or session.get("sv", 0) != (user.session_version or 0):
+        session.pop("user_id", None)  # blocked, deleted, or password changed elsewhere
         return None
     return user

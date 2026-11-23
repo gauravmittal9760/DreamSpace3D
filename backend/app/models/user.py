@@ -25,6 +25,8 @@ class User(db.Model):
     is_blocked = db.Column(db.Boolean, nullable=False, default=False, server_default=db.false())
     blocked_reason = db.Column(db.String(200), nullable=True)
     password_changed_at = db.Column(db.DateTime(timezone=True), nullable=True)
+    # bumped on password change/reset: every other device/session is signed out
+    session_version = db.Column(db.Integer, nullable=False, default=0, server_default="0")
 
     projects = db.relationship("Project", back_populates="user", cascade="all, delete-orphan")
 

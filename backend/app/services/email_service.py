@@ -13,6 +13,7 @@ OTP_PURPOSES = {
     "admin_recovery": "Admin Account Recovery",
     "forgot_username": "Forgot Username Verification",
     "change_email": "Confirm Your New Email",
+    "admin_email": "Confirm New Admin Email",
 }
 
 
